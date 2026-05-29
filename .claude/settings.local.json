@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"c:/Users/razam/Documents/Degree/NLP\")",
+      "Read(//c/Users/razam/Documents/Degree/NLP/**)",
+      "Bash(ssh *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(echo y | & \"C:\\\\Program Files\\\\PuTTY\\\\plink.exe\" -ssh student@13.83.218.185 -pw \"Technion2025!\" \"echo connected && uname -a && nvidia-smi --query-gpu=name,memory.total --format=csv,noheader\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\PuTTY\\\\plink.exe\" -ssh student@13.83.218.185 -pw \"Technion2025!\" -batch \"cd ~/project/code_and_example && ls code/ && echo '---' && df -h ~ && echo '---' && free -h | head -2\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\PuTTY\\\\pscp.exe\" -pw \"Technion2025!\" \"C:\\\\Users\\\\razam\\\\Documents\\\\Degree\\\\NLP\\\\project\\\\code_and_example\\\\code\\\\feature_report.py\" student@13.83.218.185:~/project/code_and_example/code/feature_report.py)",
+      "PowerShell(& \"C:\\\\Program Files\\\\PuTTY\\\\pscp.exe\" -pw \"Technion2025!\" \"C:\\\\Users\\\\razam\\\\Documents\\\\Degree\\\\NLP\\\\project\\\\code_and_example\\\\code\\\\feature_report.py\" \"student@13.83.218.185:/home/student/project/code_and_example/code/feature_report.py\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\PuTTY\\\\plink.exe\" -ssh student@13.83.218.185 -pw \"Technion2025!\" -batch \"cd ~/project/code_and_example && source .venv/bin/activate && python code/feature_report.py 2>&1\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\PuTTY\\\\pscp.exe\" -pw \"Technion2025!\" \"C:\\\\Users\\\\razam\\\\Documents\\\\Degree\\\\NLP\\\\project\\\\code_and_example\\\\code\\\\gen_f100_list.py\" \"student@13.83.218.185:/home/student/project/code_and_example/code/gen_f100_list.py\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\PuTTY\\\\plink.exe\" -ssh student@13.83.218.185 -pw \"Technion2025!\" -batch \"cd ~/project/code_and_example && source .venv/bin/activate && python code/gen_f100_list.py\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\PuTTY\\\\pscp.exe\" -pw \"Technion2025!\" \"student@13.83.218.185:/home/student/project/code_and_example/f100_features.txt\" \"C:\\\\Users\\\\razam\\\\Documents\\\\Degree\\\\NLP\\\\project\\\\f100_features.txt\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\PuTTY\\\\plink.exe\" -ssh student@13.83.218.185 -pw \"Technion2025!\" -batch \"ls ~/project/code_and_example/data/\")"
+    ]
+  }
+}
