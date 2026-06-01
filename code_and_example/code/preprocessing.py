@@ -9,20 +9,59 @@ TAG = 1
 # History tuple: (c_word, c_tag, p_word, p_tag, pp_word, pp_tag, n_word)
 History = Tuple[str, str, str, str, str, str, str]
 
-# Ratnaparkhi (1996) f100-f107 plus the HW-required capital/number features.
-FEATURE_CLASSES = ["f100", "f101", "f102", "f103", "f104",
-                   "f105", "f106", "f107", "f_cap", "f_num"]
+# Ratnaparkhi (1996) f100-f107 plus HW-required capital/number features
+# and orthographic extras (shape, all-upper, first-upper-mid-sentence, numeric).
+FEATURE_CLASSES = [
+    "f100", "f101", "f102", "f103", "f104", "f105", "f106", "f107",
+    "f_cap", "f_num",          # HW-required: word-has-uppercase / word-has-digit
+    "f_shape",                 # word shape pattern (e.g. "Xx", "dd-dd", "Xx-Xx")
+    "f_all_upper",             # whole word in uppercase (acronyms: NASA, IBM)
+    "f_first_upper",           # capital mid-sentence (proper-noun signal, not sentence start)
+    "f_is_number",             # whole word is numeric (covers floats: 3.14, -2)
+]
+
+
+def get_word_shape(word: str) -> str:
+    """Collapse word into orthographic shape pattern.
+
+    Runs are compressed: "Apple"->"Xx", "HELLO"->"X", "Wi-Fi"->"Xx-Xx",
+    "3D"->"dX", "123"->"d". Strong OOV signal for proper nouns / numbers.
+    """
+    if not word:
+        return ""
+    shape = []
+    for ch in word:
+        if ch.isupper():   shape.append("X")
+        elif ch.islower(): shape.append("x")
+        elif ch.isdigit(): shape.append("d")
+        else:              shape.append(ch)
+    # collapse consecutive duplicates so "Apple"=Xxxxx -> "Xx"
+    out, prev = [], None
+    for c in shape:
+        if c != prev:
+            out.append(c)
+            prev = c
+    return "".join(out)
+
+
+def is_number(word: str) -> bool:
+    """True iff whole word parses as a number (3.14, -2, 1e5). Tighter than has-digit."""
+    try:
+        float(word)
+        return True
+    except ValueError:
+        return False
 
 
 def iter_features(history: History) -> Iterator[Tuple[str, tuple]]:
     """Yields (feature_class, feature_key) for every feature that fires on `history`.
 
-    Single source of truth used both when counting features (training) and when
-    representing a history as active indices (matrix build + inference).
+    Single source of truth: used both when counting features (training) and
+    when representing a history as active indices (matrix build + inference).
     """
     c_word, c_tag, p_word, p_tag, pp_word, pp_tag, n_word = history
 
-    yield "f100", (c_word, c_tag)                      # word + tag
+    yield "f100", (c_word, c_tag)                      # word + tag (Ratnaparkhi base)
     for k in range(1, 5):                              # affixes of length 1..4
         if len(c_word) >= k:
             yield "f101", (c_word[-k:], c_tag)         # suffix + tag
@@ -32,10 +71,22 @@ def iter_features(history: History) -> Iterator[Tuple[str, tuple]]:
     yield "f105", (c_tag,)                             # tag unigram
     yield "f106", (p_word, c_tag)                      # previous word + tag
     yield "f107", (n_word, c_tag)                      # next word + tag
+
+    # HW-required: capital/number flags keyed on tag only (low-cost, generalize across OOV).
     if any(ch.isupper() for ch in c_word):
-        yield "f_cap", (c_tag,)                        # word has a capital letter
+        yield "f_cap", (c_tag,)
     if any(ch.isdigit() for ch in c_word):
-        yield "f_num", (c_tag,)                        # word has a digit
+        yield "f_num", (c_tag,)
+
+    # Orthographic extras (keyed on tag, NOT on full word, to keep param count down).
+    yield "f_shape", (get_word_shape(c_word), c_tag)   # shape pattern + tag
+    if c_word.isupper() and len(c_word) > 1:
+        yield "f_all_upper", (c_tag,)                  # acronym signal
+    # Distinguish mid-sentence capital (proper noun) from sentence-initial capital.
+    if c_word[:1].isupper() and p_word != "*" and pp_word != "*":
+        yield "f_first_upper", (c_tag,)
+    if is_number(c_word):
+        yield "f_is_number", (c_tag,)                  # whole-word numeric (floats too)
 
 
 class FeatureStatistics:
@@ -46,6 +97,9 @@ class FeatureStatistics:
         self.tags_counts = defaultdict(int)
         self.words_count = defaultdict(int)
         self.histories = []
+        # Maps word -> set of tags seen with it in training. Used by Viterbi to
+        # prune the candidate tag set per position (huge speedup, small acc cost).
+        self.word_tags_dict = defaultdict(set)
 
     def get_word_tag_pair_count(self, file_path: str) -> None:
         """
@@ -62,6 +116,7 @@ class FeatureStatistics:
                     self.tags.add(c[1])
                     self.tags_counts[c[1]] += 1
                     self.words_count[c[0]] += 1
+                    self.word_tags_dict[c[0]].add(c[1])  # record observed (word, tag) for Viterbi pruning
                     history = (c[0], c[1], p[0], p[1], pp[0], pp[1], n[0])
                     self.histories.append(history)
                     for feat_class, key in iter_features(history):
@@ -69,22 +124,27 @@ class FeatureStatistics:
 
 
 class Feature2id:
-    def __init__(self, feature_statistics: FeatureStatistics, threshold: int):
+    def __init__(self, feature_statistics: FeatureStatistics, threshold: int, feature_subset: List[str] = None):
         """
         @param feature_statistics: the feature statistics object
         @param threshold: minimum number of appearances for a feature to be included
+        @param feature_subset: optional list of feature classes to keep. None = all classes.
+                               Used for Model 2 (500-param cap) to drop expensive classes.
         """
         self.feature_statistics = feature_statistics
         self.threshold = threshold
+        # active_features = classes actually used; everything else is dropped at index assignment.
+        self.active_features = list(feature_subset) if feature_subset else list(FEATURE_CLASSES)
         self.n_total_features = 0
-        self.feature_to_idx = {fc: OrderedDict() for fc in FEATURE_CLASSES}
+        self.feature_to_idx = {fc: OrderedDict() for fc in self.active_features}
         self.histories_features = OrderedDict()
         self.small_matrix = sparse.csr_matrix
         self.big_matrix = sparse.csr_matrix
 
     def get_features_idx(self) -> None:
         """Assigns an index to each feature that appears at least `threshold` times."""
-        for feat_class in FEATURE_CLASSES:
+        # Only iterate over active_features so dropped classes get zero indices.
+        for feat_class in self.active_features:
             for feat, count in self.feature_statistics.feature_rep_dict[feat_class].items():
                 if count >= self.threshold:
                     self.feature_to_idx[feat_class][feat] = self.n_total_features
@@ -127,22 +187,27 @@ class Feature2id:
 def represent_input_with_features(history: History, dict_of_dicts: Dict[str, Dict[Tuple, int]]) -> List[int]:
     """
     Returns the list of active feature indices for a given history.
+    Filters via dict_of_dicts so dropped classes (not in subset) contribute nothing.
     @param history: (c_word, c_tag, p_word, p_tag, pp_word, pp_tag, n_word)
     @param dict_of_dicts: maps feature class name -> {feature_key -> index}
     """
     features = []
     for feat_class, key in iter_features(history):
-        idx = dict_of_dicts[feat_class].get(key)
+        class_map = dict_of_dicts.get(feat_class)
+        if class_map is None:
+            continue                      # class not in active subset (Model 2 path)
+        idx = class_map.get(key)
         if idx is not None:
             features.append(idx)
     return features
 
 
-def preprocess_train(train_path: str, threshold: int) -> Tuple[FeatureStatistics, Feature2id]:
+def preprocess_train(train_path: str, threshold: int, feature_subset: List[str] = None) -> Tuple[FeatureStatistics, Feature2id]:
+    """Build statistics + Feature2id. `feature_subset` restricts which classes survive (Model 2)."""
     statistics = FeatureStatistics()
     statistics.get_word_tag_pair_count(train_path)
 
-    feature2id = Feature2id(statistics, threshold)
+    feature2id = Feature2id(statistics, threshold, feature_subset)
     feature2id.get_features_idx()
     feature2id.calc_represent_input_with_features()
     print(feature2id.n_total_features)

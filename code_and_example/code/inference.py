@@ -1,9 +1,45 @@
 import numpy as np
 from typing import List
-from preprocessing import read_test, represent_input_with_features, Feature2id
+from preprocessing import read_test, represent_input_with_features, Feature2id, get_word_shape
 from tqdm import tqdm
 
 BEAM = 50  # max (prev_tag, cur_tag) states kept per position
+
+
+def _build_word_tags(feature2id: Feature2id, all_tags: List[str]) -> dict:
+    """Build word -> candidate-tag-set map for Viterbi pruning.
+
+    Prefer the explicit `word_tags_dict` collected in FeatureStatistics
+    (every (word, tag) seen, regardless of feature-threshold pruning).
+    Fall back to scanning surviving f100 keys for older pickles.
+    """
+    stats = feature2id.feature_statistics
+    wt = getattr(stats, "word_tags_dict", None)
+    if wt:
+        return {w: set(tags) for w, tags in wt.items()}
+    # Backwards-compatible fallback: derive from f100 keys that passed threshold.
+    out = {}
+    for word, tag in feature2id.feature_to_idx.get("f100", {}):
+        out.setdefault(word, set()).add(tag)
+    return out
+
+
+def _build_shape_tags(feature2id: Feature2id) -> dict:
+    """shape -> tag-set, derived from surviving f_shape keys. OOV fallback signal."""
+    out = {}
+    for key in feature2id.feature_to_idx.get("f_shape", {}):
+        shape, tag = key
+        out.setdefault(shape, set()).add(tag)
+    return out
+
+
+def _build_suffix_tags(feature2id: Feature2id) -> dict:
+    """suffix -> tag-set, derived from surviving f101 keys. Last-resort OOV signal."""
+    out = {}
+    for key in feature2id.feature_to_idx.get("f101", {}):
+        suffix, tag = key
+        out.setdefault(suffix, set()).add(tag)
+    return out
 
 
 def memm_viterbi(sentence: List[str], pre_trained_weights: np.ndarray, feature2id: Feature2id) -> List[str]:
@@ -18,16 +54,30 @@ def memm_viterbi(sentence: List[str], pre_trained_weights: np.ndarray, feature2i
     feat_to_idx = feature2id.feature_to_idx
     all_tags = [t for t in feature2id.feature_statistics.tags if t not in ("*", "~")]
 
-    # Candidate-tag pruning: tags each word was seen with in training (from f100).
-    word_tags = {}
-    for word, tag in feat_to_idx["f100"]:
-        word_tags.setdefault(word, set()).add(tag)
+    # Candidate-tag sources, in priority order: seen-with-word > seen-with-shape > seen-with-suffix.
+    word_tags = _build_word_tags(feature2id, all_tags)
+    shape_tags = _build_shape_tags(feature2id)
+    suffix_tags = _build_suffix_tags(feature2id)
 
     def cands(idx: int) -> List[str]:
+        """OOV fallback chain: word -> shape -> longest matching suffix -> all tags."""
         if idx < 2:
             return ["*"]
-        seen = word_tags.get(sentence[idx])
-        return sorted(seen) if seen else all_tags
+        w = sentence[idx]
+        seen = word_tags.get(w)
+        if seen:
+            return sorted(seen)
+        # Shape fallback: e.g. unseen proper noun "Smith" -> shape "Xx" -> NNP-like tags.
+        sh = get_word_shape(w)
+        seen = shape_tags.get(sh)
+        if seen:
+            return sorted(seen)
+        # Suffix fallback: try longest -> shortest; "-ing" -> VBG, "-ed" -> VBD/VBN, etc.
+        for k in range(min(4, len(w)), 0, -1):
+            seen = suffix_tags.get(w[-k:])
+            if seen:
+                return sorted(seen)
+        return all_tags
 
     n = len(sentence) - 2          # index of the last real word
     pred = ["*"] * n               # pred[k-1] holds the tag of position k
@@ -42,6 +92,7 @@ def memm_viterbi(sentence: List[str], pre_trained_weights: np.ndarray, feature2i
         Sv = cands(k)
         new_pi, bp_k = {}, {}
         for (t, u), base in pi.items():
+            # Score every candidate v under context (t, u) and softmax-normalize over Sv.
             scores = np.array([
                 pre_trained_weights[idx].sum() if idx else 0.0
                 for idx in (represent_input_with_features(
@@ -52,6 +103,7 @@ def memm_viterbi(sentence: List[str], pre_trained_weights: np.ndarray, feature2i
                 val, key = base + lq, (u, v)
                 if key not in new_pi or val > new_pi[key]:
                     new_pi[key], bp_k[key] = val, t
+        # Beam prune: keep top-BEAM states by score to cap runtime on long sentences.
         if len(new_pi) > BEAM:
             new_pi = dict(sorted(new_pi.items(), key=lambda kv: kv[1], reverse=True)[:BEAM])
         pi, bp[k] = new_pi, bp_k
@@ -87,3 +139,18 @@ def tag_all_test(test_path: str, pre_trained_weights: np.ndarray, feature2id: Fe
             output_file.write(f"{sentence[i]}_{pred[i]}")
         output_file.write("\n")
     output_file.close()
+
+
+def compute_accuracy(predictions_path: str, gold_path: str) -> float:
+    """Word-level accuracy: compare predicted .wtag to gold .wtag, same sentence order."""
+    correct = total = 0
+    with open(predictions_path) as pf, open(gold_path) as gf:
+        for pl, gl in zip(pf, gf):
+            for pt, gt in zip(pl.split(), gl.split()):
+                # rsplit so words containing '_' don't break the split.
+                pw, ptag = pt.rsplit("_", 1)
+                gw, gtag = gt.rsplit("_", 1)
+                total += 1
+                if ptag == gtag:
+                    correct += 1
+    return correct / total if total else 0.0
