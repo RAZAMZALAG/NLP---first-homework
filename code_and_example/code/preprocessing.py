@@ -14,7 +14,7 @@ History = Tuple[str, str, str, str, str, str, str]
 class FeatureStatistics:
     def __init__(self):
         self.n_total_features = 0
-        self.feature_rep_dict = {"f100": defaultdict(int)}  # feature class -> (feature -> count)
+        self.feature_rep_dict = {"f100": defaultdict(int), "f101": defaultdict(int)}  # feature class -> (feature -> count)
         self.tags = {"~"}
         self.tags_counts = defaultdict(int)
         self.words_count = defaultdict(int)
@@ -35,6 +35,8 @@ class FeatureStatistics:
                     self.tags_counts[tag] += 1
                     self.words_count[word] += 1
                     self.feature_rep_dict["f100"][(word, tag)] += 1
+                    for k in range(1, 5):
+                        self.feature_rep_dict["f101"][(word[-k:], tag)] += 1
 
                 for i in range(2, len(sentence) - 1):
                     c, p, pp, n = sentence[i], sentence[i-1], sentence[i-2], sentence[i+1]
@@ -50,7 +52,7 @@ class Feature2id:
         self.feature_statistics = feature_statistics
         self.threshold = threshold
         self.n_total_features = 0
-        self.feature_to_idx = {"f100": OrderedDict()}
+        self.feature_to_idx = {"f100": OrderedDict(), "f101": OrderedDict()}
         self.histories_features = OrderedDict()
         self.small_matrix = sparse.csr_matrix
         self.big_matrix = sparse.csr_matrix
@@ -111,6 +113,12 @@ def represent_input_with_features(history: History, dict_of_dicts: Dict[str, Dic
     # f100: (word, tag) pair
     if (c_word, c_tag) in dict_of_dicts["f100"]:
         features.append(dict_of_dicts["f100"][(c_word, c_tag)])
+
+    # f101: suffix (len 1-4) + tag
+    for k in range(1, 5):
+        key = (c_word[-k:], c_tag)
+        if key in dict_of_dicts.get("f101", {}):
+            features.append(dict_of_dicts["f101"][key])
 
     return features
 
