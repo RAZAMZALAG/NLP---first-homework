@@ -1,8 +1,7 @@
 from scipy import sparse
 from collections import OrderedDict, defaultdict
 import numpy as np
-from typing import List, Dict, Tuple
-
+from typing import List, Dict, Tuple, Iterator
 
 WORD = 0
 TAG = 1
@@ -10,11 +9,39 @@ TAG = 1
 # History tuple: (c_word, c_tag, p_word, p_tag, pp_word, pp_tag, n_word)
 History = Tuple[str, str, str, str, str, str, str]
 
+# Ratnaparkhi (1996) f100-f107 plus the HW-required capital/number features.
+FEATURE_CLASSES = ["f100", "f101", "f102", "f103", "f104",
+                   "f105", "f106", "f107", "f_cap", "f_num"]
+
+
+def iter_features(history: History) -> Iterator[Tuple[str, tuple]]:
+    """Yields (feature_class, feature_key) for every feature that fires on `history`.
+
+    Single source of truth used both when counting features (training) and when
+    representing a history as active indices (matrix build + inference).
+    """
+    c_word, c_tag, p_word, p_tag, pp_word, pp_tag, n_word = history
+
+    yield "f100", (c_word, c_tag)                      # word + tag
+    for k in range(1, 5):                              # affixes of length 1..4
+        if len(c_word) >= k:
+            yield "f101", (c_word[-k:], c_tag)         # suffix + tag
+            yield "f102", (c_word[:k], c_tag)          # prefix + tag
+    yield "f103", (pp_tag, p_tag, c_tag)               # tag trigram
+    yield "f104", (p_tag, c_tag)                       # tag bigram
+    yield "f105", (c_tag,)                             # tag unigram
+    yield "f106", (p_word, c_tag)                      # previous word + tag
+    yield "f107", (n_word, c_tag)                      # next word + tag
+    if any(ch.isupper() for ch in c_word):
+        yield "f_cap", (c_tag,)                        # word has a capital letter
+    if any(ch.isdigit() for ch in c_word):
+        yield "f_num", (c_tag,)                        # word has a digit
+
 
 class FeatureStatistics:
     def __init__(self):
         self.n_total_features = 0
-        self.feature_rep_dict = {"f100": defaultdict(int), "f101": defaultdict(int)}  # feature class -> (feature -> count)
+        self.feature_rep_dict = {fc: defaultdict(int) for fc in FEATURE_CLASSES}  # class -> (feature -> count)
         self.tags = {"~"}
         self.tags_counts = defaultdict(int)
         self.words_count = defaultdict(int)
@@ -30,17 +57,15 @@ class FeatureStatistics:
                 pairs = line.rstrip("\n").split()
                 sentence = [("*", "*"), ("*", "*")] + [tuple(p.split("_")) for p in pairs] + [("~", "~")]
 
-                for word, tag in sentence[2:-1]:
-                    self.tags.add(tag)
-                    self.tags_counts[tag] += 1
-                    self.words_count[word] += 1
-                    self.feature_rep_dict["f100"][(word, tag)] += 1
-                    for k in range(1, 5):
-                        self.feature_rep_dict["f101"][(word[-k:], tag)] += 1
-
                 for i in range(2, len(sentence) - 1):
-                    c, p, pp, n = sentence[i], sentence[i-1], sentence[i-2], sentence[i+1]
-                    self.histories.append((c[0], c[1], p[0], p[1], pp[0], pp[1], n[0]))
+                    c, p, pp, n = sentence[i], sentence[i - 1], sentence[i - 2], sentence[i + 1]
+                    self.tags.add(c[1])
+                    self.tags_counts[c[1]] += 1
+                    self.words_count[c[0]] += 1
+                    history = (c[0], c[1], p[0], p[1], pp[0], pp[1], n[0])
+                    self.histories.append(history)
+                    for feat_class, key in iter_features(history):
+                        self.feature_rep_dict[feat_class][key] += 1
 
 
 class Feature2id:
@@ -52,17 +77,15 @@ class Feature2id:
         self.feature_statistics = feature_statistics
         self.threshold = threshold
         self.n_total_features = 0
-        self.feature_to_idx = {"f100": OrderedDict(), "f101": OrderedDict()}
+        self.feature_to_idx = {fc: OrderedDict() for fc in FEATURE_CLASSES}
         self.histories_features = OrderedDict()
         self.small_matrix = sparse.csr_matrix
         self.big_matrix = sparse.csr_matrix
 
     def get_features_idx(self) -> None:
         """Assigns an index to each feature that appears at least `threshold` times."""
-        for feat_class, counts in self.feature_statistics.feature_rep_dict.items():
-            if feat_class not in self.feature_to_idx:
-                continue
-            for feat, count in counts.items():
+        for feat_class in FEATURE_CLASSES:
+            for feat, count in self.feature_statistics.feature_rep_dict[feat_class].items():
                 if count >= self.threshold:
                     self.feature_to_idx[feat_class][feat] = self.n_total_features
                     self.n_total_features += 1
@@ -107,19 +130,11 @@ def represent_input_with_features(history: History, dict_of_dicts: Dict[str, Dic
     @param history: (c_word, c_tag, p_word, p_tag, pp_word, pp_tag, n_word)
     @param dict_of_dicts: maps feature class name -> {feature_key -> index}
     """
-    c_word, c_tag = history[0], history[1]
     features = []
-
-    # f100: (word, tag) pair
-    if (c_word, c_tag) in dict_of_dicts["f100"]:
-        features.append(dict_of_dicts["f100"][(c_word, c_tag)])
-
-    # f101: suffix (len 1-4) + tag
-    for k in range(1, 5):
-        key = (c_word[-k:], c_tag)
-        if key in dict_of_dicts.get("f101", {}):
-            features.append(dict_of_dicts["f101"][key])
-
+    for feat_class, key in iter_features(history):
+        idx = dict_of_dicts[feat_class].get(key)
+        if idx is not None:
+            features.append(idx)
     return features
 
 
