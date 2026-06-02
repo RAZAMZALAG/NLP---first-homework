@@ -1,14 +1,87 @@
 import argparse
 import os
 import pickle
+import shutil
 import numpy as np
-from preprocessing import preprocess_train
+from preprocessing import preprocess_train, FEATURE_CLASSES
 from optimization import get_optimal_vector
 from inference import tag_all_test, compute_accuracy
 
 # Per-model defaults. Model 2 drops expensive classes to stay under the 500-feature cap.
 MODEL2_FEATURE_SUBSET = ["f100", "f101", "f102", "f103", "f104", "f105",
                         "f_cap", "f_num", "f_shape", "f_all_upper", "f_first_upper", "f_is_number"]
+
+# Model 1 feature-budget configs. The assignment REQUIRES every family f100-f107,
+# so no family is dropped -- we only raise per-family thresholds to fit < 10,000 params.
+# Classes absent from "thr" default to threshold 1 (kept fully). All three keep the
+# full f100-f107 set + required cap/num + orthographic extras; they differ in where the
+# budget goes (suffix/morphology vs. lexical-context prev/next-word vs. balanced).
+# "drop" stays [] for Model 1; it exists only for completeness.
+MODEL1_CONFIGS = {
+    # --- Rounds 1-2 configs A-H, RETROFITTED (Round 5) with the proven case-backoff
+    #     lever. Originally tuned before the f_lower / f_prev_shape / f_next_shape
+    #     families existed, so they left those at thr 1 and blew past 10k (auto-skipped).
+    #     Each now carries L's winning fixed block (f_lower:5, prev/next shape:2) and
+    #     pays for it by raising f100/f101; the f102-f107 split still encodes each
+    #     config's original CHARACTER, so this re-tests those shapes against L (95.93%).
+    #     Run `tune.py --dry_run --configs A B C D E F G H` first to verify all land <10k.
+    # A: balanced -- every family meaningfully represented (L-like baseline).
+    "A": {"drop": [], "thr": {"f100": 30, "f101": 30, "f102": 150, "f103": 20,
+                              "f104": 7, "f106": 25, "f107": 25, "f_shape": 2,
+                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # B: lexical-context leaning -- more prev/next-WORD (low f106/f107), pay via suffix.
+    "B": {"drop": [], "thr": {"f100": 30, "f101": 40, "f102": 200, "f103": 20,
+                              "f104": 7, "f106": 15, "f107": 15, "f_shape": 2,
+                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # C: morphology-max -- pour budget into suffix (low f101), context families thin.
+    "C": {"drop": [], "thr": {"f100": 35, "f101": 20, "f102": 300, "f103": 25,
+                              "f104": 8, "f106": 40, "f107": 40, "f_shape": 3,
+                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # D: starve prefix (high f102), reinvest in suffix + prev/next-word context.
+    "D": {"drop": [], "thr": {"f100": 30, "f101": 20, "f102": 300, "f103": 20,
+                              "f104": 7, "f106": 18, "f107": 18, "f_shape": 2,
+                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # E: rare words + max suffix, near-minimal prefix; moderate context.
+    "E": {"drop": [], "thr": {"f100": 20, "f101": 18, "f102": 400, "f103": 25,
+                              "f104": 8, "f106": 30, "f107": 30, "f_shape": 2,
+                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # F: more rare WORDS (low f100), trim suffix/trigram to pay for it.
+    "F": {"drop": [], "thr": {"f100": 15, "f101": 30, "f102": 250, "f103": 25,
+                              "f104": 8, "f106": 30, "f107": 25, "f_shape": 2,
+                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # G: more prev/next-WORD context (low f106/f107), prefix near-minimal.
+    "G": {"drop": [], "thr": {"f100": 35, "f101": 35, "f102": 300, "f103": 25,
+                              "f104": 7, "f106": 12, "f107": 12, "f_shape": 2,
+                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # H: more tag structure (low trigram f103 + bigram f104), pay via suffix/context.
+    "H": {"drop": [], "thr": {"f100": 35, "f101": 40, "f102": 300, "f103": 12,
+                              "f104": 3, "f106": 30, "f107": 25, "f_shape": 2,
+                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # --- Round 3: add generalizing/OOV families (f_lower case backoff, prev/next-word shape).
+    #     New families need EXPLICIT thresholds here; absent => thr 1 => budget blows past 10k.
+    #     All three pay for the new families by trimming F's winning shape.
+    # I: lean on case backoff (f_lower thr8=1899). Pay via f100/f101 (redundant w/ f_lower). ~9869.
+    "I": {"drop": [], "thr": {"f100": 15, "f101": 20, "f102": 200, "f103": 20,
+                              "f104": 7, "f106": 25, "f107": 20, "f_shape": 2,
+                              "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2}},
+    # J: lean on context-shape (prev/next thr1=805/806); f_lower thin (thr15=992). ~9980.
+    "J": {"drop": [], "thr": {"f100": 10, "f101": 20, "f102": 200, "f103": 20,
+                              "f104": 7, "f106": 25, "f107": 20, "f_shape": 2,
+                              "f_lower": 15, "f_prev_shape": 1, "f_next_shape": 1}},
+    # K: balanced new families (f_lower thr12=1270, shapes thr2). ~9927.
+    "K": {"drop": [], "thr": {"f100": 10, "f101": 20, "f102": 200, "f103": 20,
+                              "f104": 7, "f106": 20, "f107": 20, "f_shape": 2,
+                              "f_lower": 12, "f_prev_shape": 2, "f_next_shape": 2}},
+    # --- Round 4: push case-backoff harder (I won R3). Cut f100/f101 (redundant w/ f_lower).
+    # L: f_lower thr5=3003. f100 thr30=455, f101 thr30=1686. ~9814.
+    "L": {"drop": [], "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20,
+                              "f104": 7, "f106": 25, "f107": 20, "f_shape": 2,
+                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # M: f_lower thr3=4749 (max). Everything else to floor.
+    "M": {"drop": [], "thr": {"f100": 50, "f101": 50, "f102": 300, "f103": 30,
+                              "f104": 10, "f106": 30, "f107": 30, "f_shape": 3,
+                              "f_lower": 3, "f_prev_shape": 3, "f_next_shape": 3}},
+}
 
 
 def _train_and_save(train_path: str, threshold: int, lam: float, weights_path: str,
@@ -33,34 +106,39 @@ def _kfold_indices(n: int, k: int, seed: int = 42):
         yield train, val
 
 
-def cross_validate(train_path: str, k: int, threshold: int, lam: float,
-                   feature_subset, trained_models_dir: str):
+def cross_validate(train_path: str, k: int, threshold, lam: float, feature_subset):
     """k-fold CV for Model 2 evaluation (report requirement).
 
-    Writes per-fold split files to trained_models_dir, trains + scores each fold,
-    returns (mean_acc, accs_list).
+    All fold artifacts go to a throwaway `cv_tmp/` dir that is deleted afterwards,
+    so they never leak into `trained_models/` (which gets zipped into the submission).
+    Returns (mean_acc, accs_list).
     """
-    with open(train_path) as f:
-        lines = f.readlines()
-    accs = []
-    for fold, (tr_idx, val_idx) in enumerate(_kfold_indices(len(lines), k)):
-        # Materialize fold files (preprocess_train reads from disk).
-        fold_train = os.path.join(trained_models_dir, f"fold{fold}_train.wtag")
-        fold_val = os.path.join(trained_models_dir, f"fold{fold}_val.wtag")
-        with open(fold_train, "w") as f: f.writelines(lines[i] for i in tr_idx)
-        with open(fold_val, "w") as f:   f.writelines(lines[i] for i in val_idx)
+    cv_dir = "cv_tmp"
+    os.makedirs(cv_dir, exist_ok=True)
+    try:
+        with open(train_path) as f:
+            lines = f.readlines()
+        accs = []
+        for fold, (tr_idx, val_idx) in enumerate(_kfold_indices(len(lines), k)):
+            # Materialize fold files (preprocess_train reads from disk).
+            fold_train = os.path.join(cv_dir, f"fold{fold}_train.wtag")
+            fold_val = os.path.join(cv_dir, f"fold{fold}_val.wtag")
+            with open(fold_train, "w") as f: f.writelines(lines[i] for i in tr_idx)
+            with open(fold_val, "w") as f:   f.writelines(lines[i] for i in val_idx)
 
-        fold_w = os.path.join(trained_models_dir, f"fold{fold}_weights.pkl")
-        fold_pred = os.path.join(trained_models_dir, f"fold{fold}_pred.wtag")
-        weights, feature2id = _train_and_save(fold_train, threshold, lam, fold_w, feature_subset)
-        # tagged=True so read_test parses gold tags for accuracy reporting downstream.
-        tag_all_test(fold_val, weights, feature2id, fold_pred, tagged=True)
-        acc = compute_accuracy(fold_pred, fold_val)
-        print(f"[fold {fold}] acc={acc*100:.2f}%")
-        accs.append(acc)
-    mean = float(np.mean(accs))
-    print(f"[CV mean] {mean*100:.2f}%  (folds: {[f'{a*100:.2f}' for a in accs]})")
-    return mean, accs
+            fold_w = os.path.join(cv_dir, f"fold{fold}_weights.pkl")
+            fold_pred = os.path.join(cv_dir, f"fold{fold}_pred.wtag")
+            weights, feature2id = _train_and_save(fold_train, threshold, lam, fold_w, feature_subset)
+            # tagged=True so read_test parses gold tags for accuracy reporting downstream.
+            tag_all_test(fold_val, weights, feature2id, fold_pred, tagged=True)
+            acc = compute_accuracy(fold_pred, fold_val)
+            print(f"[fold {fold}] acc={acc*100:.2f}%")
+            accs.append(acc)
+        mean = float(np.mean(accs))
+        print(f"[CV mean] {mean*100:.2f}%  (folds: {[f'{a*100:.2f}' for a in accs]})")
+        return mean, accs
+    finally:
+        shutil.rmtree(cv_dir, ignore_errors=True)  # keep trained_models/ clean for submission
 
 
 def main():
@@ -74,6 +152,8 @@ def main():
                         help="Also tag data/test<N>.wtag and report accuracy.")
     parser.add_argument("--cv", type=int, default=0,
                         help="If >0, run k-fold CV on train file before final training.")
+    parser.add_argument("--config", choices=sorted(MODEL1_CONFIGS), default=None,
+                        help="Model 1 feature-budget preset (per-family thresholds). Overrides --threshold.")
     args = parser.parse_args()
 
     sid = f"{args.sid}"
@@ -94,9 +174,16 @@ def main():
     # Model 2 uses the reduced subset to satisfy the 500-feature cap.
     feature_subset = MODEL2_FEATURE_SUBSET if model_number == 2 else None
 
+    # Model 1 preset: per-family thresholds + dropped classes, engineered to fit < 10k params.
+    if args.config:
+        cfg = MODEL1_CONFIGS[args.config]
+        feature_subset = [c for c in FEATURE_CLASSES if c not in cfg["drop"]]
+        threshold = cfg["thr"]
+        print(f"[config {args.config}] drop={cfg['drop']} thr={cfg['thr']}")
+
     # Optional CV pass before fitting the production model.
     if args.cv > 0:
-        cross_validate(train_path, args.cv, threshold, lam, feature_subset, trained_models_dir)
+        cross_validate(train_path, args.cv, threshold, lam, feature_subset)
 
     # Final training on the full train set, save weights for graders to reproduce.
     pre_trained_weights, feature2id = _train_and_save(
