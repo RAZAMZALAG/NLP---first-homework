@@ -18,6 +18,12 @@ FEATURE_CLASSES = [
     "f_all_upper",             # whole word in uppercase (acronyms: NASA, IBM)
     "f_first_upper",           # capital mid-sentence (proper-noun signal, not sentence start)
     "f_is_number",             # whole word is numeric (covers floats: 3.14, -2)
+    "f_hyphen",                # word contains an internal hyphen (JJ/CD: "year-earlier")
+    # Generalizing / OOV families: back off from exact lexical word to a coarser key,
+    # so evidence transfers to words unseen (or seen only in another case) in training.
+    "f_lower",                 # lowercased current word + tag (case backoff: "The"~"the")
+    "f_prev_shape",            # shape of previous word + tag (context that fires on OOV neighbors)
+    "f_next_shape",            # shape of next word + tag
 ]
 
 
@@ -83,10 +89,17 @@ def iter_features(history: History) -> Iterator[Tuple[str, tuple]]:
     if c_word.isupper() and len(c_word) > 1:
         yield "f_all_upper", (c_tag,)                  # acronym signal
     # Distinguish mid-sentence capital (proper noun) from sentence-initial capital.
-    if c_word[:1].isupper() and p_word != "*" and pp_word != "*":
+    if c_word[:1].isupper() and p_word != "*":
         yield "f_first_upper", (c_tag,)
     if is_number(c_word):
         yield "f_is_number", (c_tag,)                  # whole-word numeric (floats too)
+    if "-" in c_word[1:-1]:
+        yield "f_hyphen", (c_tag,)                     # internal hyphen (compound adj/number)
+
+    # Generalizing backoff families (keyed coarser than exact word -> transfer to OOV).
+    yield "f_lower", (c_word.lower(), c_tag)           # case-insensitive word backoff
+    yield "f_prev_shape", (get_word_shape(p_word), c_tag)  # prev-word shape (fires even if p_word OOV)
+    yield "f_next_shape", (get_word_shape(n_word), c_tag)  # next-word shape
 
 
 class FeatureStatistics:
@@ -124,10 +137,12 @@ class FeatureStatistics:
 
 
 class Feature2id:
-    def __init__(self, feature_statistics: FeatureStatistics, threshold: int, feature_subset: List[str] = None):
+    def __init__(self, feature_statistics: FeatureStatistics, threshold, feature_subset: List[str] = None):
         """
         @param feature_statistics: the feature statistics object
-        @param threshold: minimum number of appearances for a feature to be included
+        @param threshold: minimum appearances for a feature to be kept. Either an int
+                          (same threshold for every class) or a dict {feat_class: int}
+                          for per-family control (classes absent from the dict default to 1).
         @param feature_subset: optional list of feature classes to keep. None = all classes.
                                Used for Model 2 (500-param cap) to drop expensive classes.
         """
@@ -141,12 +156,19 @@ class Feature2id:
         self.small_matrix = sparse.csr_matrix
         self.big_matrix = sparse.csr_matrix
 
+    def _thr(self, feat_class: str) -> int:
+        """Per-family threshold: dict lookup (default 1) or scalar for all classes."""
+        if isinstance(self.threshold, dict):
+            return self.threshold.get(feat_class, 1)
+        return self.threshold
+
     def get_features_idx(self) -> None:
-        """Assigns an index to each feature that appears at least `threshold` times."""
+        """Assigns an index to each feature meeting its (possibly per-family) threshold."""
         # Only iterate over active_features so dropped classes get zero indices.
         for feat_class in self.active_features:
+            thr = self._thr(feat_class)
             for feat, count in self.feature_statistics.feature_rep_dict[feat_class].items():
-                if count >= self.threshold:
+                if count >= thr:
                     self.feature_to_idx[feat_class][feat] = self.n_total_features
                     self.n_total_features += 1
         print(f"you have {self.n_total_features} features!")
@@ -202,8 +224,9 @@ def represent_input_with_features(history: History, dict_of_dicts: Dict[str, Dic
     return features
 
 
-def preprocess_train(train_path: str, threshold: int, feature_subset: List[str] = None) -> Tuple[FeatureStatistics, Feature2id]:
-    """Build statistics + Feature2id. `feature_subset` restricts which classes survive (Model 2)."""
+def preprocess_train(train_path: str, threshold, feature_subset: List[str] = None) -> Tuple[FeatureStatistics, Feature2id]:
+    """Build statistics + Feature2id. `threshold` is an int or per-family dict;
+    `feature_subset` restricts which classes survive (Model 2)."""
     statistics = FeatureStatistics()
     statistics.get_word_tag_pair_count(train_path)
 
