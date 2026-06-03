@@ -85,9 +85,33 @@ MODEL1_CONFIGS = {
 
 # Model 2 (small, train2.wtag, <=500 params). 250 biomedical sentences with heavy OOV =>
 # exact-word features overfit; budget goes to generalizing families (suffix, shape,
-# tag-context, cap/num). Same per-family-threshold mechanism as Model 1. Filled after
-# measuring train2 feature counts: `uv run python code/measure_features.py 2`.
+# tag-context, cap/num). Same per-family-threshold mechanism as Model 1. Thresholds chosen
+# from the train2 feature-count table (`measure_features.py 2`) to land each ~476-497 (<500).
+# All drop f106/f107 (prev/next WORD: ~2800 sparse features, overfit on 250 sentences).
+# Cheap tag-keyed flags (f_cap/f_num/f_is_number/f_hyphen/uppers, ~38 total) kept at thr 1.
 MODEL2_CONFIGS = {
+    # A: pure generalizer -- suffix + tag-context + shape + case/shape backoff. No exact word/prefix.
+    "A": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape"],
+          "thr": {"f101": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 5,
+                  "f_lower": 20, "f_next_shape": 20}},
+    # B: add prefix (biomedical anti-/intra-), no lexical backoff.
+    "B": {"drop": ["f100", "f106", "f107", "f_lower", "f_prev_shape", "f_next_shape"],
+          "thr": {"f101": 30, "f102": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 10}},
+    # C: keep frequent exact words (function words) via f100, plus morphology + structure.
+    "C": {"drop": ["f102", "f106", "f107", "f_lower", "f_prev_shape", "f_next_shape"],
+          "thr": {"f100": 15, "f101": 20, "f103": 20, "f104": 15, "f105": 1, "f_shape": 10}},
+    # D: structure-only -- suffix + tag trigram/bigram/unigram, no orthography at all.
+    "D": {"drop": ["f100", "f102", "f106", "f107", "f_cap", "f_num", "f_shape", "f_all_upper",
+                   "f_first_upper", "f_is_number", "f_hyphen", "f_lower", "f_prev_shape", "f_next_shape"],
+          "thr": {"f101": 20, "f103": 7, "f104": 10, "f105": 1}},
+    # E: orthography-heavy -- shape + prev/next-word shape for OOV context.
+    "E": {"drop": ["f100", "f102", "f106", "f107"],
+          "thr": {"f101": 30, "f103": 20, "f104": 20, "f105": 1, "f_shape": 3,
+                  "f_lower": 20, "f_prev_shape": 15, "f_next_shape": 15}},
+    # F: balanced -- suffix + light prefix + thin case backoff.
+    "F": {"drop": ["f100", "f106", "f107", "f_prev_shape", "f_next_shape"],
+          "thr": {"f101": 20, "f102": 50, "f103": 20, "f104": 20, "f105": 1, "f_shape": 10,
+                  "f_lower": 30}},
 }
 
 
