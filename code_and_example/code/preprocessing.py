@@ -171,7 +171,6 @@ class Feature2id:
                 if count >= thr:
                     self.feature_to_idx[feat_class][feat] = self.n_total_features
                     self.n_total_features += 1
-        print(f"you have {self.n_total_features} features!")
 
     def calc_represent_input_with_features(self) -> None:
         """Builds small_matrix (true-tag histories) and big_matrix (all-tag histories) as sparse bool matrices."""
@@ -224,19 +223,22 @@ def represent_input_with_features(history: History, dict_of_dicts: Dict[str, Dic
     return features
 
 
-def preprocess_train(train_path: str, threshold, feature_subset: List[str] = None) -> Tuple[FeatureStatistics, Feature2id]:
+def preprocess_train(train_path: str, threshold, feature_subset: List[str] = None,
+                     verbose: bool = False) -> Tuple[FeatureStatistics, Feature2id]:
     """Build statistics + Feature2id. `threshold` is an int or per-family dict;
-    `feature_subset` restricts which classes survive (Model 2)."""
+    `feature_subset` restricts which classes survive (Model 2). `verbose` prints the
+    per-family feature breakdown (off by default so CV/grid runs stay quiet)."""
     statistics = FeatureStatistics()
     statistics.get_word_tag_pair_count(train_path)
 
     feature2id = Feature2id(statistics, threshold, feature_subset)
     feature2id.get_features_idx()
     feature2id.calc_represent_input_with_features()
-    print(feature2id.n_total_features)
 
-    for feat_class, idx in feature2id.feature_to_idx.items():
-        print(feat_class, len(idx))
+    if verbose:
+        print(f"{feature2id.n_total_features} features:")
+        for feat_class, idx in feature2id.feature_to_idx.items():
+            print(f"  {feat_class} {len(idx)}")
     return statistics, feature2id
 
 
