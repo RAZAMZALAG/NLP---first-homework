@@ -1,4 +1,17 @@
+# Model weights / binaries
 *.pkl
 *.pt
 *.pth
 *.bin
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Tuning / run artifacts (regenerable, never submitted)
+*.log
+*.bak
+tune_tmp/
+cv_tmp/
+tune_results.txt
+trained_models/*_pred.wtag
