@@ -83,6 +83,13 @@ MODEL1_CONFIGS = {
                               "f_lower": 3, "f_prev_shape": 3, "f_next_shape": 3}},
 }
 
+# Model 2 (small, train2.wtag, <=500 params). 250 biomedical sentences with heavy OOV =>
+# exact-word features overfit; budget goes to generalizing families (suffix, shape,
+# tag-context, cap/num). Same per-family-threshold mechanism as Model 1. Filled after
+# measuring train2 feature counts: `uv run python code/measure_features.py 2`.
+MODEL2_CONFIGS = {
+}
+
 
 def _train_and_save(train_path: str, threshold: int, lam: float, weights_path: str,
                     feature_subset=None):
