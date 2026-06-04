@@ -201,21 +201,22 @@ def main():
     parser = argparse.ArgumentParser(description="Train MEMM and tag competition file.")
     parser.add_argument("--sid", help="student ID")
     parser.add_argument("--model_number", type=int, choices=[1, 2], default=1)
-    parser.add_argument("--threshold", type=int, default=1)
-    parser.add_argument("--lam", type=float, default=1.0)
+    parser.add_argument("--threshold", type=int, default=None,
+                        help="Scalar feature threshold. Omit to use the model's tuned config.")
+    parser.add_argument("--lam", type=float, default=None,
+                        help="L2 lambda. Omit to use the tuned config's lambda.")
     # Optional add-ons: evaluate on test1.wtag (Model 1) or k-fold CV (Model 2).
     parser.add_argument("--eval_test", action="store_true",
                         help="Also tag data/test<N>.wtag and report accuracy.")
     parser.add_argument("--cv", type=int, default=0,
                         help="If >0, run k-fold CV on train file before final training.")
-    parser.add_argument("--config", choices=sorted(MODEL1_CONFIGS), default=None,
-                        help="Model 1 feature-budget preset (per-family thresholds). Overrides --threshold.")
+    parser.add_argument("--config", default=None,
+                        choices=sorted(set(MODEL1_CONFIGS) | set(MODEL2_CONFIGS)),
+                        help="Feature-budget preset; defaults to the model's tuned winner (M1=L, M2=G).")
     args = parser.parse_args()
 
     sid = f"{args.sid}"
     model_number = args.model_number
-    threshold = args.threshold
-    lam = args.lam
     trained_models_dir = "trained_models"
 
     if not os.path.exists(trained_models_dir):
@@ -227,15 +228,27 @@ def main():
     weights_path = f"{trained_models_dir}/weights_{model_number}.pkl"
     predictions_path = f"comp_m{model_number}_{sid}.wtag"
 
-    # Model 2 uses the reduced subset to satisfy the 500-feature cap.
-    feature_subset = MODEL2_FEATURE_SUBSET if model_number == 2 else None
+    # Tuned winners from our search -> bare `main.py --model_number N` reproduces the submitted
+    # models exactly (M1: config L lam 0.3 = 95.93% / 9814 feat; M2: config G lam 1.0 / 491 feat).
+    DEFAULT_CONFIG = {1: ("L", 0.3), 2: ("G", 1.0)}
+    configs = MODEL1_CONFIGS if model_number == 1 else MODEL2_CONFIGS
 
-    # Model 1 preset: per-family thresholds + dropped classes, engineered to fit < 10k params.
-    if args.config:
-        cfg = MODEL1_CONFIGS[args.config]
+    if args.threshold is not None:
+        # Explicit scalar threshold: original behaviour (Model 2 keeps its reduced subset).
+        threshold = args.threshold
+        feature_subset = MODEL2_FEATURE_SUBSET if model_number == 2 else None
+        lam = args.lam if args.lam is not None else 1.0
+        print(f"[model {model_number} scalar threshold={threshold} lam={lam}]")
+    else:
+        cfgname = args.config or DEFAULT_CONFIG[model_number][0]
+        if cfgname not in configs:
+            parser.error(f"--config {cfgname} is not a Model {model_number} config "
+                         f"(choose from {sorted(configs)})")
+        cfg = configs[cfgname]
         feature_subset = [c for c in FEATURE_CLASSES if c not in cfg["drop"]]
         threshold = cfg["thr"]
-        print(f"[config {args.config}] drop={cfg['drop']} thr={cfg['thr']}")
+        lam = args.lam if args.lam is not None else DEFAULT_CONFIG[model_number][1]
+        print(f"[model {model_number} config {cfgname} lam={lam}] thr={cfg['thr']}")
 
     # Optional CV pass before fitting the production model.
     if args.cv > 0:
