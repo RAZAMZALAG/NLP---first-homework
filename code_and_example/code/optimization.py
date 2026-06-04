@@ -55,5 +55,16 @@ def get_optimal_vector(statistics: FeatureStatistics, feature2id: Feature2id, la
                                    iprint=10,
                                    epsilon=1e-7,
                                    bounds=None)
+    # Slim the saved object: inference (memm_viterbi / tag_all_test) only needs feature_to_idx
+    # plus tags and word_tags_dict. Drop the training-only bulk (histories, count dicts, and the
+    # big/small sparse matrices) so weights_*.pkl stays small instead of hundreds of MB.
+    feature2id.small_matrix = None
+    feature2id.big_matrix = None
+    feature2id.histories_features = None
+    fs = feature2id.feature_statistics
+    fs.histories = None
+    fs.feature_rep_dict = None
+    fs.words_count = None
+    fs.tags_counts = None
     with open(weights_path, 'wb+') as f:
         pickle.dump((optimal_params, feature2id), f)
