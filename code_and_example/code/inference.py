@@ -1,3 +1,9 @@
+"""Decoding. We implemented the provided memm_viterbi stub and helpers:
+- Trigram Viterbi in log-space with a beam (top-BEAM states/position) for tractable decoding.
+- OOV candidate fall-back (cands): tags seen with the word, else its shape, else its suffix,
+  else all tags -- so unseen words still get a sensible guess.
+- compute_accuracy: word-level accuracy, used by our CV harness.
+"""
 import numpy as np
 from typing import List
 from preprocessing import read_test, represent_input_with_features, Feature2id, get_word_shape

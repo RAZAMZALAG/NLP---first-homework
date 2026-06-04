@@ -1,3 +1,10 @@
+"""Feature extraction and indexing. Added to the provided f100 scaffold:
+- iter_features: Ratnaparkhi f101-f107 + required capital/number features, plus orthographic and
+  OOV back-off families (word shape, f_lower, prev/next-word shape) that key on coarser signals
+  than the exact word to generalize to unseen words. Single definition shared by train/inference.
+- Feature2id._thr: per-family thresholds (threshold may be a {class: min_count} dict) to fit the
+  parameter caps by family; optional feature_subset drops whole families.
+"""
 from scipy import sparse
 from collections import OrderedDict, defaultdict
 import numpy as np

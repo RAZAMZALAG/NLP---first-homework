@@ -1,3 +1,10 @@
+"""Train, save weights, tag the competition file. Added to the provided driver:
+- MODEL1_CONFIGS / MODEL2_CONFIGS: per-family-threshold presets fitting the caps; the submitted
+  models are config L (Model 1, lam 0.3) and config G (Model 2, lam 1.0).
+- --model_number N defaults to that model's tuned winner so the command reproduces the exact
+  submitted weights; --config selects another preset, an explicit --threshold keeps scalar mode.
+- cross_validate: k-fold CV for Model 2 (no held-out test set).
+"""
 import argparse
 import os
 import pickle

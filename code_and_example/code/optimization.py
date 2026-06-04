@@ -1,3 +1,8 @@
+"""L-BFGS training (objective/gradient provided, unchanged). Our only change: get_optimal_vector
+strips training-only data (histories, count dicts, sparse matrices) from feature2id before
+pickling -- inference needs only feature_to_idx, tags and word_tags_dict -- shrinking
+weights_*.pkl from hundreds of MB to <1 MB while still reproducing the competition files exactly.
+"""
 import numpy as np
 import pickle
 from typing import Any, Tuple
