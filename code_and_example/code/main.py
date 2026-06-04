@@ -18,132 +18,39 @@ from inference import tag_all_test, compute_accuracy
 MODEL2_FEATURE_SUBSET = ["f100", "f101", "f102", "f103", "f104", "f105",
                         "f_cap", "f_num", "f_shape", "f_all_upper", "f_first_upper", "f_is_number"]
 
-# Model 1 feature-budget configs. The assignment REQUIRES every family f100-f107,
-# so no family is dropped -- we only raise per-family thresholds to fit < 10,000 params.
-# Classes absent from "thr" default to threshold 1 (kept fully). All three keep the
-# full f100-f107 set + required cap/num + orthographic extras; they differ in where the
-# budget goes (suffix/morphology vs. lexical-context prev/next-word vs. balanced).
-# "drop" stays [] for Model 1; it exists only for completeness.
+# Model 1 feature-budget presets: per-family count thresholds to fit < 10,000 parameters
+# (classes absent from "thr" default to 1; "drop" stays [] since the assignment requires every
+# f100-f107 family). Only the tuned winner L is kept live; the configs explored to reach it are
+# summarized here, full grid + numbers in guide/model1_implementation.md.
+#
+# Search on test1: R1 (A-E) balanced / lexical-context / morphology / prefix-starved / max-suffix
+# shapes; R2 (F-H) variations around the leader; R3 (I-K) introduce the f_lower case-backoff and
+# prev/next-word-shape families -- the decisive accuracy lever; R4 (L-M) push f_lower hardest.
+# Winner L puts f_lower at its sweet spot (thr 5 = 3,003 feat) and raises f100/f101 to pay -> 9,814
+# feat, 95.93%. M (f_lower maxed, 4,749) overshot and starved f100/f101 -> worse. lambda optimum is
+# a broad 0.3-0.5 plateau.
 MODEL1_CONFIGS = {
-    # --- Rounds 1-2 configs A-H, RETROFITTED (Round 5) with the proven case-backoff
-    #     lever. Originally tuned before the f_lower / f_prev_shape / f_next_shape
-    #     families existed, so they left those at thr 1 and blew past 10k (auto-skipped).
-    #     Each now carries L's winning fixed block (f_lower:5, prev/next shape:2) and
-    #     pays for it by raising f100/f101; the f102-f107 split still encodes each
-    #     config's original CHARACTER, so this re-tests those shapes against L (95.93%).
-    #     Run `tune.py --dry_run --configs A B C D E F G H` first to verify all land <10k.
-    # A: balanced -- every family meaningfully represented (L-like baseline).
-    "A": {"drop": [], "thr": {"f100": 30, "f101": 30, "f102": 150, "f103": 20,
-                              "f104": 7, "f106": 25, "f107": 25, "f_shape": 2,
-                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # B: lexical-context leaning -- more prev/next-WORD (low f106/f107), pay via suffix.
-    "B": {"drop": [], "thr": {"f100": 30, "f101": 40, "f102": 200, "f103": 20,
-                              "f104": 7, "f106": 15, "f107": 15, "f_shape": 2,
-                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # C: morphology-max -- pour budget into suffix (low f101), context families thin.
-    "C": {"drop": [], "thr": {"f100": 35, "f101": 20, "f102": 300, "f103": 25,
-                              "f104": 8, "f106": 40, "f107": 40, "f_shape": 3,
-                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # D: starve prefix (high f102), reinvest in suffix + prev/next-word context.
-    "D": {"drop": [], "thr": {"f100": 30, "f101": 20, "f102": 300, "f103": 20,
-                              "f104": 7, "f106": 18, "f107": 18, "f_shape": 2,
-                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # E: rare words + max suffix, near-minimal prefix; moderate context.
-    "E": {"drop": [], "thr": {"f100": 20, "f101": 18, "f102": 400, "f103": 25,
-                              "f104": 8, "f106": 30, "f107": 30, "f_shape": 2,
-                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # F: more rare WORDS (low f100), trim suffix/trigram to pay for it.
-    "F": {"drop": [], "thr": {"f100": 15, "f101": 30, "f102": 250, "f103": 25,
-                              "f104": 8, "f106": 30, "f107": 25, "f_shape": 2,
-                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # G: more prev/next-WORD context (low f106/f107), prefix near-minimal.
-    "G": {"drop": [], "thr": {"f100": 35, "f101": 35, "f102": 300, "f103": 25,
-                              "f104": 7, "f106": 12, "f107": 12, "f_shape": 2,
-                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # H: more tag structure (low trigram f103 + bigram f104), pay via suffix/context.
-    "H": {"drop": [], "thr": {"f100": 35, "f101": 40, "f102": 300, "f103": 12,
-                              "f104": 3, "f106": 30, "f107": 25, "f_shape": 2,
-                              "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # --- Round 3: add generalizing/OOV families (f_lower case backoff, prev/next-word shape).
-    #     New families need EXPLICIT thresholds here; absent => thr 1 => budget blows past 10k.
-    #     All three pay for the new families by trimming F's winning shape.
-    # I: lean on case backoff (f_lower thr8=1899). Pay via f100/f101 (redundant w/ f_lower). ~9869.
-    "I": {"drop": [], "thr": {"f100": 15, "f101": 20, "f102": 200, "f103": 20,
-                              "f104": 7, "f106": 25, "f107": 20, "f_shape": 2,
-                              "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2}},
-    # J: lean on context-shape (prev/next thr1=805/806); f_lower thin (thr15=992). ~9980.
-    "J": {"drop": [], "thr": {"f100": 10, "f101": 20, "f102": 200, "f103": 20,
-                              "f104": 7, "f106": 25, "f107": 20, "f_shape": 2,
-                              "f_lower": 15, "f_prev_shape": 1, "f_next_shape": 1}},
-    # K: balanced new families (f_lower thr12=1270, shapes thr2). ~9927.
-    "K": {"drop": [], "thr": {"f100": 10, "f101": 20, "f102": 200, "f103": 20,
-                              "f104": 7, "f106": 20, "f107": 20, "f_shape": 2,
-                              "f_lower": 12, "f_prev_shape": 2, "f_next_shape": 2}},
-    # --- Round 4: push case-backoff harder (I won R3). Cut f100/f101 (redundant w/ f_lower).
-    # L: f_lower thr5=3003. f100 thr30=455, f101 thr30=1686. ~9814.
     "L": {"drop": [], "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20,
                               "f104": 7, "f106": 25, "f107": 20, "f_shape": 2,
                               "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # M: f_lower thr3=4749 (max). Everything else to floor.
-    "M": {"drop": [], "thr": {"f100": 50, "f101": 50, "f102": 300, "f103": 30,
-                              "f104": 10, "f106": 30, "f107": 30, "f_shape": 3,
-                              "f_lower": 3, "f_prev_shape": 3, "f_next_shape": 3}},
 }
 
-# Model 2 (small, train2.wtag, <=500 params). 250 biomedical sentences with heavy OOV =>
-# exact-word features overfit; budget goes to generalizing families (suffix, shape,
-# tag-context, cap/num). Same per-family-threshold mechanism as Model 1. Thresholds chosen
-# from the train2 feature-count table (`measure_features.py 2`) to land each ~476-497 (<500).
-# All drop f106/f107 (prev/next WORD: ~2800 sparse features, overfit on 250 sentences).
-# Cheap tag-keyed flags (f_cap/f_num/f_is_number/f_hyphen/uppers, ~38 total) kept at thr 1.
+# Model 2 presets (<= 500 params). 250 biomedical sentences with heavy OOV -> exact-word features
+# overfit, so the budget goes to generalizing families and the sparse prev/next-WORD families
+# (f106/f107) are dropped; cheap tag-keyed flags (cap/num/hyphen/upper, ~38) are kept at thr 1.
+# Only the tuned winner G is kept live; the search is summarized here, full grid in
+# guide/model2_plan.md (+ model2-status).
+#
+# Search by repeated 5-fold CV on train2: R1 (A-F) -> pure-generalizer A best (prefix and
+# structure-only variants worst); R2 refine -> G (max suffix, f101 thr15) and a backoff-heavy
+# rival tie at ~92.7%; R3 combine the levers -> no gain (suffix and case-backoff are redundant),
+# lambda flat. We chose G because suffixes fire on OOV words whereas case-backoff only fires on
+# words seen in training, so G generalizes better to the (high-OOV) competition set.
 MODEL2_CONFIGS = {
-    # A: pure generalizer -- suffix + tag-context + shape + case/shape backoff. No exact word/prefix.
-    "A": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape"],
-          "thr": {"f101": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 5,
-                  "f_lower": 20, "f_next_shape": 20}},
-    # B: add prefix (biomedical anti-/intra-), no lexical backoff.
-    "B": {"drop": ["f100", "f106", "f107", "f_lower", "f_prev_shape", "f_next_shape"],
-          "thr": {"f101": 30, "f102": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 10}},
-    # C: keep frequent exact words (function words) via f100, plus morphology + structure.
-    "C": {"drop": ["f102", "f106", "f107", "f_lower", "f_prev_shape", "f_next_shape"],
-          "thr": {"f100": 15, "f101": 20, "f103": 20, "f104": 15, "f105": 1, "f_shape": 10}},
-    # D: structure-only -- suffix + tag trigram/bigram/unigram, no orthography at all.
-    "D": {"drop": ["f100", "f102", "f106", "f107", "f_cap", "f_num", "f_shape", "f_all_upper",
-                   "f_first_upper", "f_is_number", "f_hyphen", "f_lower", "f_prev_shape", "f_next_shape"],
-          "thr": {"f101": 20, "f103": 7, "f104": 10, "f105": 1}},
-    # E: orthography-heavy -- shape + prev/next-word shape for OOV context.
-    "E": {"drop": ["f100", "f102", "f106", "f107"],
-          "thr": {"f101": 30, "f103": 20, "f104": 20, "f105": 1, "f_shape": 3,
-                  "f_lower": 20, "f_prev_shape": 15, "f_next_shape": 15}},
-    # F: balanced -- suffix + light prefix + thin case backoff.
-    "F": {"drop": ["f100", "f106", "f107", "f_prev_shape", "f_next_shape"],
-          "thr": {"f101": 20, "f102": 50, "f103": 20, "f104": 20, "f105": 1, "f_shape": 10,
-                  "f_lower": 30}},
-    # --- Round 2: refinements around winner A (92.52%). A uses 484/500, 16 free. ---
-    # G: max suffix -- pour budget into f101 (thr15=242), drop next-shape to pay.
+    # Max suffix (f101 thr 15 = 242 feat) + vocabulary-free tag context + shape + thin case
+    # back-off + cheap flags; drops exact-word, prefix and prev/next-WORD. 491 feat, lambda 1.0.
     "G": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape", "f_next_shape"],
           "thr": {"f101": 15, "f103": 20, "f104": 20, "f105": 1, "f_shape": 7, "f_lower": 30}},
-    # H: A + finer shape granularity (f_shape thr3=69).
-    "H": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape"],
-          "thr": {"f101": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 3,
-                  "f_lower": 20, "f_next_shape": 20}},
-    # I: more case backoff (f_lower thr10=76), drop next-shape to pay.
-    "I": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape", "f_next_shape"],
-          "thr": {"f101": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 5, "f_lower": 10}},
-    # J: more tag-context (f103/f104 thr15), no lexical backoff -- structure vs backoff test.
-    "J": {"drop": ["f100", "f102", "f106", "f107", "f_lower", "f_prev_shape", "f_next_shape"],
-          "thr": {"f101": 20, "f103": 15, "f104": 15, "f105": 1, "f_shape": 7}},
-    # K: A + prev-shape too (use the headroom for full left+right shape context).
-    "K": {"drop": ["f100", "f102", "f106", "f107"],
-          "thr": {"f101": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 10,
-                  "f_lower": 30, "f_prev_shape": 20, "f_next_shape": 20}},
-    # --- Round 3: combine the two winning levers from R2 -- max suffix (G) + more backoff (I). ---
-    # N: max suffix (f101 thr15) + mid backoff (f_lower thr15), keep some shape; trim f104 to pay.
-    "N": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape", "f_next_shape"],
-          "thr": {"f101": 15, "f103": 20, "f104": 30, "f105": 1, "f_shape": 10, "f_lower": 15}},
-    # P: max suffix + max backoff, no shape (pure lexical morphology + case backoff + tag-context).
-    "P": {"drop": ["f100", "f102", "f106", "f107", "f_shape", "f_prev_shape", "f_next_shape"],
-          "thr": {"f101": 15, "f103": 20, "f104": 20, "f105": 1, "f_lower": 10}},
 }
 
 
