@@ -112,6 +112,31 @@ MODEL2_CONFIGS = {
     "F": {"drop": ["f100", "f106", "f107", "f_prev_shape", "f_next_shape"],
           "thr": {"f101": 20, "f102": 50, "f103": 20, "f104": 20, "f105": 1, "f_shape": 10,
                   "f_lower": 30}},
+    # --- Round 2: refinements around winner A (92.52%). A uses 484/500, 16 free. ---
+    # G: max suffix -- pour budget into f101 (thr15=242), drop next-shape to pay.
+    "G": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape", "f_next_shape"],
+          "thr": {"f101": 15, "f103": 20, "f104": 20, "f105": 1, "f_shape": 7, "f_lower": 30}},
+    # H: A + finer shape granularity (f_shape thr3=69).
+    "H": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape"],
+          "thr": {"f101": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 3,
+                  "f_lower": 20, "f_next_shape": 20}},
+    # I: more case backoff (f_lower thr10=76), drop next-shape to pay.
+    "I": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape", "f_next_shape"],
+          "thr": {"f101": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 5, "f_lower": 10}},
+    # J: more tag-context (f103/f104 thr15), no lexical backoff -- structure vs backoff test.
+    "J": {"drop": ["f100", "f102", "f106", "f107", "f_lower", "f_prev_shape", "f_next_shape"],
+          "thr": {"f101": 20, "f103": 15, "f104": 15, "f105": 1, "f_shape": 7}},
+    # K: A + prev-shape too (use the headroom for full left+right shape context).
+    "K": {"drop": ["f100", "f102", "f106", "f107"],
+          "thr": {"f101": 20, "f103": 20, "f104": 20, "f105": 1, "f_shape": 10,
+                  "f_lower": 30, "f_prev_shape": 20, "f_next_shape": 20}},
+    # --- Round 3: combine the two winning levers from R2 -- max suffix (G) + more backoff (I). ---
+    # N: max suffix (f101 thr15) + mid backoff (f_lower thr15), keep some shape; trim f104 to pay.
+    "N": {"drop": ["f100", "f102", "f106", "f107", "f_prev_shape", "f_next_shape"],
+          "thr": {"f101": 15, "f103": 20, "f104": 30, "f105": 1, "f_shape": 10, "f_lower": 15}},
+    # P: max suffix + max backoff, no shape (pure lexical morphology + case backoff + tag-context).
+    "P": {"drop": ["f100", "f102", "f106", "f107", "f_shape", "f_prev_shape", "f_next_shape"],
+          "thr": {"f101": 15, "f103": 20, "f104": 20, "f105": 1, "f_lower": 10}},
 }
 
 
