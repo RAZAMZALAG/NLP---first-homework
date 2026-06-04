@@ -15,3 +15,6 @@ tune_tmp/
 cv_tmp/
 tune_results.txt
 trained_models/*_pred.wtag
+
+# Environment-specific data link (symlink on VM, junction on laptop)
+code_and_example/data
