@@ -44,7 +44,10 @@ print(f"power-law fit: A={popt[0]:.4f} B={popt[1]:.4f} C={popt[2]:.4f}")
 print(f"=> full-250 estimate = {est_250*100:.2f}%   "
       f"(plateau A = {popt[0]*100:.2f}%)")
 
-plt.figure(figsize=(5.2, 3.4))
+# Fonts >= 12 pt so the embedded figure clears the report's 9 pt minimum.
+plt.rcParams.update({"font.size": 13, "axes.titlesize": 13, "axes.labelsize": 13,
+                     "xtick.labelsize": 12, "ytick.labelsize": 12, "legend.fontsize": 12})
+plt.figure(figsize=(6.4, 4.2))
 plt.errorbar(xs, ys * 100, yerr=es * 100, fmt="o", capsize=3, label="repeated 5-fold CV")
 xx = np.linspace(xs.min(), 255, 200)
 plt.plot(xx, f(xx, *popt) * 100, "-", label=r"power-law fit $A-Bn^{-C}$")
@@ -53,6 +56,6 @@ plt.scatter([250], [est_250 * 100], c="red", zorder=5,
 plt.axvline(250, ls="--", c="gray", lw=0.8)
 plt.xlabel("# training sentences"); plt.ylabel("word-level CV accuracy (%)")
 plt.title(f"Model 2 learning curve (config {CONFIG}, $\\lambda$={LAM})")
-plt.legend(fontsize=8); plt.tight_layout()
+plt.legend(); plt.tight_layout()
 plt.savefig("../guide/m2_learning_curve.png", dpi=150)
 print("saved figure -> guide/m2_learning_curve.png")
