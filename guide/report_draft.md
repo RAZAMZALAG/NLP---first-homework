@@ -7,18 +7,18 @@
 
 ## Overview
 
-We train a trigram MEMM by L2-regularized maximum likelihood (L-BFGS). The provided code applied
+I train a trigram MEMM by L2-regularized maximum likelihood (L-BFGS). The provided code applied
 a **single global count threshold** to every feature; with the strict parameter caps (Model 1
 ≤10,000, Model 2 ≤500) this is too blunt — it discards rare-but-informative features while keeping
-many redundant ones. We replaced it with **per-family thresholds**: the threshold is a dict
+many redundant ones. I replaced it with **per-family thresholds**: the threshold is a dict
 `{feature_family: min_count}` (default 1), so each family is pruned independently and the budget is
 steered to the families that actually help. Each model is then just a choice of per-family
-thresholds, which we selected by search (Model 1 on `test1`, Model 2 by cross-validation).
+thresholds, which I selected by search (Model 1 on `test1`, Model 2 by cross-validation).
 
 ## Feature families and their method
 
 Every feature is a binary indicator `(family, key)`; `iter_features` defines them once so training
-and inference agree. Beyond the provided `f100` (word+tag) we implemented:
+and inference agree. Beyond the provided `f100` (word+tag) I implemented:
 
 - **Lexical / morphological:** `f101` suffix and `f102` prefix of length 1–4 (+tag) — capture
   morphology and fire on unseen words; `f100` exact word+tag.
@@ -35,7 +35,7 @@ and inference agree. Beyond the provided `f100` (word+tag) we implemented:
 
 **Model 1** (config L, λ=0.3): keeps all families; `f_lower` at its sweet spot (3,003 feat) is the
 decisive lever → 9,814 params. **Model 2** (config G, λ=1.0): 250 OOV-heavy biomedical sentences,
-so we drop the sparse word-context families and spend the 500 budget on suffixes (`f101`, ~half),
+so I drop the sparse word-context families and spend the 500 budget on suffixes (`f101`, ~half),
 tag context, shape and a thin back-off → 491 params.
 
 ## Training
@@ -43,7 +43,7 @@ tag context, shape and a thin back-off → 491 params.
 `main.py --model_number N` builds the features for that model's tuned config and fits the weights
 with L-BFGS using the provided objective/gradient (linear term − log-normalizer − ½λ‖w‖²). The
 objective is convex, so the optimum is unique and training is reproducible regardless of
-initialization. Weights are pickled to `trained_models/weights_N.pkl` (we strip the training-only
+initialization. Weights are pickled to `trained_models/weights_N.pkl` (I strip the training-only
 statistics/matrices first, keeping the file <1 MB).
 
 ## Inference
@@ -56,10 +56,10 @@ tags — which both accelerates decoding and yields sensible guesses for unseen 
 ## Test and evaluation
 
 Model 1 is evaluated on the held-out `test1.wtag`: **95.93 %** word accuracy. Model 2 has no test
-set, so we use **repeated 5-fold cross-validation** (5 seeds × 5 folds): **92.7 % ± 0.24 (95 % CI)**.
-Since folds train on only ~200 of 250 sentences, we fit a power-law learning curve (Fig. 1) and
+set, so I use **repeated 5-fold cross-validation** (5 seeds × 5 folds): **92.7 % ± 0.24 (95 % CI)**.
+Since folds train on only ~200 of 250 sentences, I fit a power-law learning curve (Fig. 1) and
 extrapolate to the full model (**93.6 %**). The competition file is not harder than CV — its OOV
-rate (21.0 %) matches the CV held-out rate (20.8 %) — so we **predict ≈ 93 % on `comp2.words`**.
+rate (21.0 %) matches the CV held-out rate (20.8 %) — so I **predict ≈ 93 % on `comp2.words`**.
 
 ![Model 2 learning curve](m2_learning_curve.png)
 
