@@ -31,20 +31,25 @@ MODEL1_CONFIGS = {
                               "f104": 7, "f106": 25, "f107": 20, "f_shape": 2,
                               "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
     # Round 6: L + unsupervised word-cluster features (induce_clusters) for cur/prev/next word.
-    # "clusters" spec triggers induction; f_lower trimmed to 8 to fund the cluster families while
-    # staying <10k. K swept via LC128/256/512. Thresholds sized with tune.py --dry_run on test1.
-    "LC256": {"drop": [], "clusters": {"k": 256, "min_freq": 5},
-              "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
-                      "f107": 20, "f_shape": 2, "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2,
-                      "f_clust": 3, "f_prev_clust": 5, "f_next_clust": 5}},
-    "LC128": {"drop": [], "clusters": {"k": 128, "min_freq": 5},
-              "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
-                      "f107": 20, "f_shape": 2, "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2,
-                      "f_clust": 3, "f_prev_clust": 5, "f_next_clust": 5}},
-    "LC512": {"drop": [], "clusters": {"k": 512, "min_freq": 5},
-              "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
-                      "f107": 20, "f_shape": 2, "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2,
-                      "f_clust": 3, "f_prev_clust": 5, "f_next_clust": 5}},
+    # The "clusters" spec triggers induction; cluster thresholds sized from the train1 cluster-
+    # family counts so each preset lands <10k. f_clust = current-word cluster (compact, most
+    # informative); prev/next_clust = context. Two strategies: AUGMENT (keep f_lower, add f_clust)
+    # vs REPLACE (drop f_lower, let clusters carry word-class generalization).
+    # LC256b: augment -- L with f_lower thr8 (1899) + f_clust thr5 (1050) ~= 9760.
+    "LC256b": {"drop": [], "clusters": {"k": 256, "min_freq": 5},
+               "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
+                       "f107": 20, "f_shape": 2, "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2,
+                       "f_clust": 5}},
+    # LC256a: replace -- drop f_lower; f_clust5 + prev/next_clust20 (~2741) ~= 9552.
+    "LC256a": {"drop": ["f_lower"], "clusters": {"k": 256, "min_freq": 5},
+               "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
+                       "f107": 20, "f_shape": 2, "f_prev_shape": 2, "f_next_shape": 2,
+                       "f_clust": 5, "f_prev_clust": 20, "f_next_clust": 20}},
+    # LC512a: replace, larger K -- drop f_lower; f_clust5 + prev/next_clust30 ~= 9361.
+    "LC512a": {"drop": ["f_lower"], "clusters": {"k": 512, "min_freq": 5},
+               "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
+                       "f107": 20, "f_shape": 2, "f_prev_shape": 2, "f_next_shape": 2,
+                       "f_clust": 5, "f_prev_clust": 30, "f_next_clust": 30}},
 }
 
 # Model 2 presets (<= 500 params). 250 biomedical sentences with heavy OOV -> exact-word features
