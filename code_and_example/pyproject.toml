@@ -1,9 +1,11 @@
 [project]
 name = "nlp-hw1"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = "==3.11.*"
 dependencies = [
+    "matplotlib>=3.10.8",
     "numpy",
+    "pandas>=3.0.2",
     "scipy",
-    "tqdm",
+    "tqdm>=4.67.3",
 ]
