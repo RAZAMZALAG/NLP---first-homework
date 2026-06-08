@@ -35,8 +35,9 @@ MODEL1_CONFIGS = {
     # family counts so each preset lands <10k. f_clust = current-word cluster (compact, most
     # informative); prev/next_clust = context. Two strategies: AUGMENT (keep f_lower, add f_clust)
     # vs REPLACE (drop f_lower, let clusters carry word-class generalization).
-    # LC256b: augment -- L with f_lower thr8 (1899) + f_clust thr5 (1050) ~= 9760.
-    "LC256b": {"drop": [], "clusters": {"k": 256, "min_freq": 5},
+    # LC256b: augment -- L with f_lower thr8 (1899) + f_clust thr5 (1050) ~= 9760. Must DROP
+    # prev/next_clust (clusters-on emits all 3 families; un-thresholded ones default to thr1).
+    "LC256b": {"drop": ["f_prev_clust", "f_next_clust"], "clusters": {"k": 256, "min_freq": 5},
                "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
                        "f107": 20, "f_shape": 2, "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2,
                        "f_clust": 5}},
