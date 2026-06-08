@@ -18,7 +18,7 @@ import pickle
 import shutil
 import time
 import numpy as np
-from preprocessing import preprocess_train, FEATURE_CLASSES
+from preprocessing import preprocess_train, FEATURE_CLASSES, induce_clusters
 from optimization import get_optimal_vector
 from inference import tag_all_test, compute_accuracy
 from main import MODEL1_CONFIGS
@@ -64,7 +64,8 @@ def main():
         cfg = MODEL1_CONFIGS[cname]
         log(f"=== config {cname} ({ci}/{len(args.configs)}): preprocessing... thr={cfg['thr']}")
         tp = time.time()
-        stats, f2i = preprocess_train(TRAIN, cfg["thr"], _subset(cfg))
+        clusters = induce_clusters(TRAIN, **cfg["clusters"]) if cfg.get("clusters") else None
+        stats, f2i = preprocess_train(TRAIN, cfg["thr"], _subset(cfg), clusters=clusters)
         nfeat = f2i.n_total_features
         fit = "OK <10k" if nfeat < 10000 else "OVER >=10k"
         log(f"    config {cname}: built {nfeat} features in {time.time()-tp:.0f}s  [{fit}]")

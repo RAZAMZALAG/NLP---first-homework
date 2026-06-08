@@ -58,6 +58,7 @@ def memm_viterbi(sentence: List[str], pre_trained_weights: np.ndarray, feature2i
     @return: N+1 tags; the caller drops index 0, keeping tags for w1..wN.
     """
     feat_to_idx = feature2id.feature_to_idx
+    clusters = getattr(feature2id.feature_statistics, "clusters", None)  # word-cluster map if any
     all_tags = [t for t in feature2id.feature_statistics.tags if t not in ("*", "~")]
 
     # Candidate-tag sources, in priority order: seen-with-word > seen-with-shape > seen-with-suffix.
@@ -102,7 +103,7 @@ def memm_viterbi(sentence: List[str], pre_trained_weights: np.ndarray, feature2i
             scores = np.array([
                 pre_trained_weights[idx].sum() if idx else 0.0
                 for idx in (represent_input_with_features(
-                    (c_word, v, p_word, u, pp_word, t, n_word), feat_to_idx) for v in Sv)
+                    (c_word, v, p_word, u, pp_word, t, n_word), feat_to_idx, clusters) for v in Sv)
             ])
             log_q = scores - (scores.max() + np.log(np.exp(scores - scores.max()).sum()))
             for v, lq in zip(Sv, log_q):

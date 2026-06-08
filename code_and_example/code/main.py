@@ -7,7 +7,7 @@
 import argparse
 import os
 import pickle
-from preprocessing import preprocess_train, FEATURE_CLASSES
+from preprocessing import preprocess_train, FEATURE_CLASSES, induce_clusters
 from optimization import get_optimal_vector
 from inference import tag_all_test, compute_accuracy
 
@@ -30,6 +30,21 @@ MODEL1_CONFIGS = {
     "L": {"drop": [], "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20,
                               "f104": 7, "f106": 25, "f107": 20, "f_shape": 2,
                               "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
+    # Round 6: L + unsupervised word-cluster features (induce_clusters) for cur/prev/next word.
+    # "clusters" spec triggers induction; f_lower trimmed to 8 to fund the cluster families while
+    # staying <10k. K swept via LC128/256/512. Thresholds sized with tune.py --dry_run on test1.
+    "LC256": {"drop": [], "clusters": {"k": 256, "min_freq": 5},
+              "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
+                      "f107": 20, "f_shape": 2, "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2,
+                      "f_clust": 3, "f_prev_clust": 5, "f_next_clust": 5}},
+    "LC128": {"drop": [], "clusters": {"k": 128, "min_freq": 5},
+              "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
+                      "f107": 20, "f_shape": 2, "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2,
+                      "f_clust": 3, "f_prev_clust": 5, "f_next_clust": 5}},
+    "LC512": {"drop": [], "clusters": {"k": 512, "min_freq": 5},
+              "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
+                      "f107": 20, "f_shape": 2, "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2,
+                      "f_clust": 3, "f_prev_clust": 5, "f_next_clust": 5}},
 }
 
 # Model 2 presets (<= 500 params). 250 biomedical sentences with heavy OOV -> exact-word features
@@ -52,9 +67,9 @@ MODEL2_CONFIGS = {
 
 
 def _train_and_save(train_path: str, threshold: int, lam: float, weights_path: str,
-                    feature_subset=None):
+                    feature_subset=None, clusters=None):
     """Train weights on train_path and pickle them to weights_path."""
-    statistics, feature2id = preprocess_train(train_path, threshold, feature_subset)
+    statistics, feature2id = preprocess_train(train_path, threshold, feature_subset, clusters=clusters)
     get_optimal_vector(statistics=statistics, feature2id=feature2id, weights_path=weights_path, lam=lam)
     with open(weights_path, "rb") as f:
         optimal_params, feature2id = pickle.load(f)
@@ -94,6 +109,7 @@ def main():
     DEFAULT_CONFIG = {1: ("L", 0.3), 2: ("G", 1.0)}
     configs = MODEL1_CONFIGS if model_number == 1 else MODEL2_CONFIGS
 
+    clusters = None
     if args.threshold is not None:
         # Explicit scalar threshold: original behaviour (Model 2 keeps its reduced subset).
         threshold = args.threshold
@@ -109,11 +125,13 @@ def main():
         feature_subset = [c for c in FEATURE_CLASSES if c not in cfg["drop"]]
         threshold = cfg["thr"]
         lam = args.lam if args.lam is not None else DEFAULT_CONFIG[model_number][1]
+        if cfg.get("clusters"):                       # induce word clusters from the train corpus
+            clusters = induce_clusters(train_path, **cfg["clusters"])
         print(f"[model {model_number} config {cfgname} lam={lam}] thr={cfg['thr']}")
 
     # Final training on the full train set, save weights for graders to reproduce.
     pre_trained_weights, feature2id = _train_and_save(
-        train_path, threshold, lam, weights_path, feature_subset)
+        train_path, threshold, lam, weights_path, feature_subset, clusters=clusters)
 
     # Optional: report accuracy on the official held-out test set (only Model 1 has one).
     if args.eval_test and os.path.exists(test_path):
