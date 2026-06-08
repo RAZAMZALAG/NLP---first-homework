@@ -7,7 +7,7 @@
 import argparse
 import os
 import pickle
-from preprocessing import preprocess_train, FEATURE_CLASSES, induce_clusters
+from preprocessing import preprocess_train, FEATURE_CLASSES
 from optimization import get_optimal_vector
 from inference import tag_all_test, compute_accuracy
 
@@ -30,27 +30,6 @@ MODEL1_CONFIGS = {
     "L": {"drop": [], "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20,
                               "f104": 7, "f106": 25, "f107": 20, "f_shape": 2,
                               "f_lower": 5, "f_prev_shape": 2, "f_next_shape": 2}},
-    # Round 6: L + unsupervised word-cluster features (induce_clusters) for cur/prev/next word.
-    # The "clusters" spec triggers induction; cluster thresholds sized from the train1 cluster-
-    # family counts so each preset lands <10k. f_clust = current-word cluster (compact, most
-    # informative); prev/next_clust = context. Two strategies: AUGMENT (keep f_lower, add f_clust)
-    # vs REPLACE (drop f_lower, let clusters carry word-class generalization).
-    # LC256b: augment -- L with f_lower thr8 (1899) + f_clust thr5 (1050) ~= 9760. Must DROP
-    # prev/next_clust (clusters-on emits all 3 families; un-thresholded ones default to thr1).
-    "LC256b": {"drop": ["f_prev_clust", "f_next_clust"], "clusters": {"k": 256, "min_freq": 5},
-               "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
-                       "f107": 20, "f_shape": 2, "f_lower": 8, "f_prev_shape": 2, "f_next_shape": 2,
-                       "f_clust": 5}},
-    # LC256a: replace -- drop f_lower; f_clust5 + prev/next_clust20 (~2741) ~= 9552.
-    "LC256a": {"drop": ["f_lower"], "clusters": {"k": 256, "min_freq": 5},
-               "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
-                       "f107": 20, "f_shape": 2, "f_prev_shape": 2, "f_next_shape": 2,
-                       "f_clust": 5, "f_prev_clust": 20, "f_next_clust": 20}},
-    # LC512a: replace, larger K -- drop f_lower; f_clust5 + prev/next_clust30 ~= 9361.
-    "LC512a": {"drop": ["f_lower"], "clusters": {"k": 512, "min_freq": 5},
-               "thr": {"f100": 30, "f101": 30, "f102": 200, "f103": 20, "f104": 7, "f106": 25,
-                       "f107": 20, "f_shape": 2, "f_prev_shape": 2, "f_next_shape": 2,
-                       "f_clust": 5, "f_prev_clust": 30, "f_next_clust": 30}},
 }
 
 # Model 2 presets (<= 500 params). 250 biomedical sentences with heavy OOV -> exact-word features
@@ -73,9 +52,9 @@ MODEL2_CONFIGS = {
 
 
 def _train_and_save(train_path: str, threshold: int, lam: float, weights_path: str,
-                    feature_subset=None, clusters=None):
+                    feature_subset=None):
     """Train weights on train_path and pickle them to weights_path."""
-    statistics, feature2id = preprocess_train(train_path, threshold, feature_subset, clusters=clusters)
+    statistics, feature2id = preprocess_train(train_path, threshold, feature_subset)
     get_optimal_vector(statistics=statistics, feature2id=feature2id, weights_path=weights_path, lam=lam)
     with open(weights_path, "rb") as f:
         optimal_params, feature2id = pickle.load(f)
@@ -115,7 +94,6 @@ def main():
     DEFAULT_CONFIG = {1: ("L", 0.3), 2: ("G", 1.0)}
     configs = MODEL1_CONFIGS if model_number == 1 else MODEL2_CONFIGS
 
-    clusters = None
     if args.threshold is not None:
         # Explicit scalar threshold: original behaviour (Model 2 keeps its reduced subset).
         threshold = args.threshold
@@ -131,13 +109,11 @@ def main():
         feature_subset = [c for c in FEATURE_CLASSES if c not in cfg["drop"]]
         threshold = cfg["thr"]
         lam = args.lam if args.lam is not None else DEFAULT_CONFIG[model_number][1]
-        if cfg.get("clusters"):                       # induce word clusters from the train corpus
-            clusters = induce_clusters(train_path, **cfg["clusters"])
         print(f"[model {model_number} config {cfgname} lam={lam}] thr={cfg['thr']}")
 
     # Final training on the full train set, save weights for graders to reproduce.
     pre_trained_weights, feature2id = _train_and_save(
-        train_path, threshold, lam, weights_path, feature_subset, clusters=clusters)
+        train_path, threshold, lam, weights_path, feature_subset)
 
     # Optional: report accuracy on the official held-out test set (only Model 1 has one).
     if args.eval_test and os.path.exists(test_path):
