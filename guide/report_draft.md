@@ -18,7 +18,7 @@ steered to the families that actually help.
 least its family's `min_count` times in the training data (`get_features_idx`). To choose the
 thresholds I tabulated each family's surviving count over a range of `min_count` values
 (`measure_features.py`) and picked the per-family values that maximize accuracy while the total
-stays under the cap — yielding **9,814 ≤ 10,000** parameters for Model 1 and **491 ≤ 500** for
+stays under the cap — yielding **9,814 ≤ 10,000** parameters for Model 1 and **486 ≤ 500** for
 Model 2. The search itself used `test1` for Model 1 and cross-validation for Model 2.
 
 ## Feature families and their method
@@ -41,11 +41,17 @@ the families differ only in the key. Beyond the provided `f100 = (word, t)` I im
   then collapses consecutive duplicates — `Apple`→`Xx`, `HELLO`→`X`, `Wi-Fi`→`Xx-Xx`, `3.14`→`d.d`.
   A strong signal for proper nouns/numbers and unseen words.
 - **Back-off** `f_lower = (lower-cased word, t)`: `"The"` shares evidence with `"the"`.
+- **Word cluster (Model 2)** `f_clust = (cluster(word), t)`: an unsupervised distributional class
+  id for the current word, induced over **train1+train2** by neighbour co-occurrence → truncated
+  SVD → k-means (scipy, seeded → deterministic; **no tags used**). It lets the tagger generalize by
+  word-class to rare/unseen biomedical words at low parameter cost.
 
 **Model 1** (config L, λ=0.3): keeps all families; `f_lower` at its sweet spot (3,003 feat) is the
-decisive lever → 9,814 params. **Model 2** (config G, λ=1.0): 250 OOV-heavy biomedical sentences,
-so I drop the sparse word-context families and spend the 500 budget on suffixes (`f101`, ~half),
-tag context, shape and a thin back-off → 491 params.
+decisive lever → 9,814 params. **Model 2** (config G2, λ=1.0): 250 OOV-heavy biomedical sentences,
+so I drop the sparse word-context families and spend the 500 budget on suffixes, tag context,
+shape, and the word-cluster feature → 486 params. Using train1's *tags* to augment training was
+tested but hurt (−1.8 % CV, news-vs-biomedical domain shift); the **unsupervised** cluster feature
+is the way that helped (it imports word-similarity, not a foreign tag distribution).
 
 ## Training and inference
 
@@ -60,13 +66,14 @@ unseen words.
 ## Test, evaluation and competition
 
 Model 1 scores **95.93 %** on the held-out `test1.wtag`. Model 2 has no test set, so I use
-**repeated 5-fold cross-validation** (5 seeds × 5 folds): **92.7 % ± 0.24 (95 % CI)**. As folds
+**repeated 5-fold cross-validation** (5 seeds × 5 folds): config G2 gives **93.0 % ± 0.24 (95 % CI)**
+(the cluster feature adds ≈ +0.3 over the no-cluster config, consistently across sizings). As folds
 train on only ~200/250 sentences, I fit a power-law learning curve (Fig. 1) that extrapolates the
-full 250-sentence model to **93.6 %**; since comp2's OOV rate (21.0 %) matches the CV held-out rate
-(20.8 %), the CV estimate transfers and I **predict ≈ 93 % on `comp2`**. `generate_comp_tagged.py`
+full 250-sentence model to **93.8 %**; since comp2's OOV rate (21.0 %) matches the CV held-out rate
+(20.8 %), the CV estimate transfers and I **predict ≈ 93.5 % on `comp2`**. `generate_comp_tagged.py`
 reproduces `comp_m{1,2}_<id>.wtag` exactly from the saved weights (`word_TAG`, original order).
 
 ![Model 2 learning curve](m2_learning_curve.png)
 
-*Figure 1. Model 2 (config G) repeated-5-fold CV accuracy vs. training-set size, with a power-law
-fit; the submitted model trains on all 250 sentences (red, ≈ 93.6 %).*
+*Figure 1. Model 2 (config G2) repeated-5-fold CV accuracy vs. training-set size, with a power-law
+fit; the submitted model trains on all 250 sentences (red, ≈ 93.8 %).*
