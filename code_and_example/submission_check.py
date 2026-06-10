@@ -95,9 +95,6 @@ def validate_tagged_output(words_path, wtag_path, model_n):
 
     prob_sent = []
     for idx, (ref_words, pred_line) in enumerate(zip(ref_sentences, pred_lines)):
-        # Normalise common formatting quirk
-        if pred_line.endswith('._.') and not pred_line.endswith(' ._.'):
-            pred_line = pred_line[:-3] + ' ._.'
         pred_tokens = pred_line.split()
 
         # Strip trailing ~ token if present

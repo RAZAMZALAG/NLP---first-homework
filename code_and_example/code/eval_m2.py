@@ -40,13 +40,13 @@ def full_count(threshold, subset):
     return f2i.n_total_features
 
 
-def _train_eval(train_lines, val_lines, threshold, subset, lam, tag):
+def _train_eval(train_lines, val_lines, threshold, subset, lam, tag, clusters=None):
     """Materialize a train/val split, train, tag val, return accuracy."""
     os.makedirs(WDIR, exist_ok=True)
     ftr, fval = f"{WDIR}/{tag}_tr.wtag", f"{WDIR}/{tag}_val.wtag"
     with open(ftr, "w") as f:  f.writelines(train_lines)
     with open(fval, "w") as f: f.writelines(val_lines)
-    stats, f2i = preprocess_train(ftr, threshold, subset)
+    stats, f2i = preprocess_train(ftr, threshold, subset, clusters=clusters)
     wpath = f"{WDIR}/{tag}_w.pkl"
     get_optimal_vector(statistics=stats, feature2id=f2i, weights_path=wpath, lam=lam)
     with open(wpath, "rb") as f:
@@ -56,7 +56,7 @@ def _train_eval(train_lines, val_lines, threshold, subset, lam, tag):
     return compute_accuracy(pred, fval)
 
 
-def kfold(lines, threshold, subset, lam, k, seed):
+def kfold(lines, threshold, subset, lam, k, seed, clusters=None):
     """One k-fold pass over sentence indices. Returns list of k fold accuracies."""
     idx = np.arange(len(lines))
     np.random.default_rng(seed).shuffle(idx)
@@ -65,15 +65,16 @@ def kfold(lines, threshold, subset, lam, k, seed):
     for i, val_i in enumerate(folds):
         tr_i = np.concatenate([folds[j] for j in range(k) if j != i])
         accs.append(_train_eval([lines[j] for j in tr_i], [lines[j] for j in val_i],
-                                threshold, subset, lam, f"s{seed}f{i}"))
+                                threshold, subset, lam, f"s{seed}f{i}", clusters))
     return accs
 
 
-def repeated_cv(lines, threshold, subset, lam, k, repeats, seed):
-    """Repeated k-fold CV; returns the flat array of all fold accuracies."""
+def repeated_cv(lines, threshold, subset, lam, k, repeats, seed, clusters=None):
+    """Repeated k-fold CV; returns the flat array of all fold accuracies.
+    `clusters` (word -> id, induced unsupervised over the full corpora) enables f_clust in folds."""
     accs = []
     for r in range(repeats):
-        accs += kfold(lines, threshold, subset, lam, k, seed + r)
+        accs += kfold(lines, threshold, subset, lam, k, seed + r, clusters)
     return np.array(accs)
 
 
